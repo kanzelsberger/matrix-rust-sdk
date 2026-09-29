@@ -107,6 +107,7 @@ use std::{
 };
 
 use matrix_sdk_base::{
+    linked_chunk::ChunkContent,
     read_receipts::{LatestReadReceipt, ReadReceipts},
     serde_helpers::extract_relation,
     store::DynStateStore,
@@ -578,6 +579,23 @@ async fn try_find_stored_receipts<T>(
     }
 }
 
+/// A cached receipt only gives a complete unread count when there is no gap
+/// between it and the live end. Ignore gaps older than the receipt: those are
+/// read history and must not trigger background pagination.
+fn has_gap_after_receipt(linked_chunk: &EventLinkedChunk, receipt: &EventId) -> bool {
+    for chunk in linked_chunk.rchunks() {
+        match chunk.content() {
+            ChunkContent::Gap(_) => return true,
+            ChunkContent::Items(events) => {
+                if events.iter().any(|event| event.event_id().as_deref() == Some(receipt)) {
+                    return false;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Given a set of events coming from sync, for a _timeline_, update the
 /// [`ReadReceipts`]'s counts of unread messages, notifications and highlights'
 /// in place.
@@ -621,8 +639,22 @@ pub(crate) async fn compute_unread_counts<T>(
         trace!(%event_id, "Saving a new active read receipt");
         read_receipts.latest_active = Some(LatestReadReceipt { event_id: event_id.clone() });
 
-        // The event for the receipt is in the linked chunk, so we'll find it
-        // and can count safely from here.
+        // Finding the receipt is not enough after a limited sync: it may be
+        // cached on the other side of a gap. Fill that gap before the local
+        // count can represent all unread messages, even though the receipt
+        // itself does not need to be fetched again.
+        if let Some(queue) = back_pagination_queue
+            && has_gap_after_receipt(linked_chunk, &event_id)
+        {
+            paginate_for_read_receipt(
+                queue,
+                event_filter.room_id(),
+                HashSet::from([event_id.clone()]),
+            );
+        }
+
+        // Count the events currently available; pagination will recompute the
+        // count as the missing history arrives.
         read_receipts.find_and_process_events(
             &event_id,
             user_id,
@@ -779,11 +811,37 @@ mod tests {
 
     use super::{
         EventFilter, MaybeReceiptEventContent, ReadReceiptsExt as _, Receipts,
-        RoomReadReceiptEventFilter, marks_as_unread, select_best_receipt, stop_on_event_ids,
+        RoomReadReceiptEventFilter, has_gap_after_receipt, marks_as_unread, select_best_receipt,
+        stop_on_event_ids,
     };
     use crate::event_cache::caches::{
         event_linked_chunk::EventLinkedChunk, pagination::BackPaginationOutcome,
     };
+
+    #[test]
+    fn test_cached_receipt_requires_backfill_only_for_newer_gaps() {
+        use matrix_sdk_base::event_cache::Gap;
+
+        let f = EventFactory::new().room(room_id!("!room:example.org")).sender(*ALICE);
+        let mut linked_chunk = EventLinkedChunk::new();
+        linked_chunk.push_gap(Gap { token: "older-read-history".to_owned() });
+        linked_chunk.push_events(vec![
+            f.text_msg("Read message").event_id(event_id!("$read")).into_event(),
+            f.text_msg("Unread message").event_id(event_id!("$unread")).into_event(),
+        ]);
+        assert!(!has_gap_after_receipt(&linked_chunk, event_id!("$read")));
+
+        // Restart sync supplies only the newest message, leaving unread history
+        // between the cached read receipt and the live end.
+        linked_chunk.push_gap(Gap { token: "missing-unread-history".to_owned() });
+        linked_chunk.push_events(vec![
+            f.text_msg("Newest unread").event_id(event_id!("$newest")).into_event(),
+        ]);
+        assert!(has_gap_after_receipt(&linked_chunk, event_id!("$read")));
+        assert!(has_gap_after_receipt(&linked_chunk, event_id!("$unread")));
+        // A newer receipt makes that gap read history; do not keep fetching it.
+        assert!(!has_gap_after_receipt(&linked_chunk, event_id!("$newest")));
+    }
 
     /// `stop_on_event_ids` breaks as soon as one of its target ids is loaded;
     /// with no targets it never breaks (falls back to the batch cap).
