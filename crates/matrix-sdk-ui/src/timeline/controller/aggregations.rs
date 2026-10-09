@@ -41,12 +41,12 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use as_variant::as_variant;
 use matrix_sdk::{
-    check_validity_of_replacement_events,
-    deserialized_responses::EncryptionInfo,
-    send_queue::{RoomSendQueueStorageError, SendHandle, SendReactionHandle, SendRedactionHandle},
+    check_validity_of_replacement_events, deserialized_responses::EncryptionInfo,
+    send_queue::SendHandle,
 };
 use ruma::{
-    MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedTransactionId, OwnedUserId, UserId,
+    MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedTransactionId, OwnedUserId, TransactionId,
+    UserId,
     events::{
         AnySyncTimelineEvent, beacon_info::BeaconInfoEventContent,
         poll::unstable_start::NewUnstablePollStartEventContentWithoutRelation,
@@ -111,9 +111,8 @@ pub(crate) enum AggregationKind {
     /// This is the marker of the end of a poll.
     PollEnd {
         /// Timestamp at which the poll ends, i.e. all the responses with a
-        /// timestamp prior to this one should be taken into account
-        /// (and all the responses with a timestamp after this one
-        /// should be dropped).
+        /// timestamp prior to this one should be taken into account (and all
+        /// the responses with a timestamp after this one should be dropped).
         end_date: MilliSecondsSinceUnixEpoch,
     },
 
@@ -136,7 +135,7 @@ pub(crate) enum AggregationKind {
     /// An event has been edited.
     ///
     /// Note that edits can't be applied in isolation; we need to identify what
-    /// the *latest* edit is, based on the event ordering. As such, they're
+    /// the _latest_ edit is, based on the event ordering. As such, they're
     /// handled exceptionally in `Aggregation::apply` and
     /// `Aggregation::unapply`, and the callers have the responsibility of
     /// considering all the edits and applying only the right one.
@@ -161,27 +160,6 @@ pub(crate) enum AggregationKind {
     },
 }
 
-/// The handle to abort an aggregation while it's still a local echo.
-#[derive(Clone, Debug)]
-pub(crate) enum AggregationSendHandle {
-    /// The aggregation was queued as a regular event.
-    Event(SendHandle),
-    /// A reaction to a local echo, queued as a child request of that echo.
-    Reaction(SendReactionHandle),
-    /// A redaction, queued as a dedicated request.
-    Redaction(SendRedactionHandle),
-}
-
-impl AggregationSendHandle {
-    pub async fn abort(&self) -> Result<bool, RoomSendQueueStorageError> {
-        match self {
-            Self::Event(handle) => handle.abort().await,
-            Self::Reaction(handle) => handle.abort().await,
-            Self::Redaction(handle) => handle.abort().await,
-        }
-    }
-}
-
 /// An aggregation is an event related to another event (for instance a
 /// reaction, a poll's response, etc.).
 ///
@@ -194,8 +172,8 @@ pub(crate) struct Aggregation {
     /// The own timeline identifier for an aggregation.
     ///
     /// It will be a transaction id when the aggregation is still a local echo,
-    /// and it will transition into an event id when the aggregation is a
-    /// remote echo (i.e. has been received in a sync response):
+    /// and it will transition into an event id when the aggregation is a remote
+    /// echo (i.e. has been received in a sync response):
     pub own_id: TimelineEventItemId,
 
     /// `None` when the aggregation came from the server; `Some` for one of our
@@ -203,7 +181,7 @@ pub(crate) struct Aggregation {
     pub send_state: Option<EventSendState>,
 
     /// Lets one of our local echoes be aborted while it's still pending.
-    pub send_handle: Option<AggregationSendHandle>,
+    pub send_handle: Option<SendHandle>,
 }
 
 /// Get the poll state from a given [`TimelineItemContent`].
@@ -270,7 +248,7 @@ impl Aggregation {
     pub fn new_local(
         own_id: TimelineEventItemId,
         kind: AggregationKind,
-        send_handle: Option<AggregationSendHandle>,
+        send_handle: Option<SendHandle>,
     ) -> Self {
         Self {
             kind,
@@ -317,7 +295,8 @@ impl Aggregation {
                     event.content().is_redacted() && event.unredacted_item.is_none();
                 if is_local && is_local_redacted || !is_local && is_remote_redacted {
                     if event.redaction_send_state.is_some() && self.send_state.is_none() {
-                        // The remote echo of a redaction we sent: nothing pending anymore.
+                        // The remote echo of a redaction we sent: nothing
+                        // pending anymore.
                         event.to_mut().redaction_send_state = None;
                         ApplyAggregationResult::UpdatedItem
                     } else {
@@ -455,7 +434,8 @@ impl Aggregation {
                     let by_user = reactions.get_mut(key);
                     if let Some(by_user) = by_user {
                         by_user.swap_remove(sender);
-                        // If this was the last reaction, remove the entire map for this key.
+                        // If this was the last reaction, remove the entire map
+                        // for this key.
                         if by_user.is_empty() {
                             reactions.swap_remove(key);
                         }
@@ -493,8 +473,8 @@ impl Aggregation {
         }
     }
 
-    /// Reflect this aggregation's send state on the item it applies to,
-    /// without reapplying its content. Returns whether the item changed.
+    /// Reflect this aggregation's send state on the item it applies to, without
+    /// reapplying its content. Returns whether the item changed.
     fn apply_send_state(
         &self,
         siblings: &[Aggregation],
@@ -549,8 +529,8 @@ pub(crate) struct Aggregations {
     ///
     /// Keyed by the sender's user ID. When a live start item is eventually
     /// inserted via `add_item`, we check if the pending stop matches and
-    /// promote it into [`Self::related_events`] so that [`Self::apply_all`]
-    /// can apply it immediately.
+    /// promote it into [`Self::related_events`] so that [`Self::apply_all`] can
+    /// apply it immediately.
     pending_beacon_stops: HashMap<OwnedUserId, Aggregation>,
 }
 
@@ -610,16 +590,16 @@ impl Aggregations {
     /// Add a given aggregation that relates to the [`TimelineItemContent`]
     /// identified by the given [`TimelineEventItemId`].
     pub fn add(&mut self, related_to: TimelineEventItemId, aggregation: Aggregation) {
-        // If the aggregation is a redaction, it invalidates all the other aggregations;
-        // remove them.
+        // If the aggregation is a redaction, it invalidates all the other
+        // aggregations; remove them.
         if matches!(aggregation.kind, AggregationKind::Redaction) {
             for agg in self.related_events.remove(&related_to).unwrap_or_default() {
                 self.inverted_map.remove(&agg.own_id);
             }
         }
 
-        // If there was any redaction among the current aggregation, adding a new one
-        // should be a noop.
+        // If there was any redaction among the current aggregation, adding a
+        // new one should be a noop.
         if let Some(previous_aggregations) = self.related_events.get(&related_to)
             && previous_aggregations
                 .iter()
@@ -630,18 +610,18 @@ impl Aggregations {
 
         self.inverted_map.insert(aggregation.own_id.clone(), related_to.clone());
 
-        // We can have 3 different states for the same aggregation in related_events, in
-        // chronological order:
+        // We can have 3 different states for the same aggregation in
+        // related_events, in chronological order:
         //
         // 1. The local echo with a transaction ID.
-        // 2. The local echo with the event ID returned by the server after sending the
-        //    event.
+        // 2. The local echo with the event ID returned by the server after
+        //    sending the event.
         // 3. The remote echo received via sync.
         //
-        // The transition from states 1 to 2 is handled in `update_send_state()`.
-        // So here we need to handle the transition from states 2 to 3. We need to
-        // replace the local echo by the remote echo, which might have more data, like
-        // the raw JSON.
+        // The transition from states 1 to 2 is handled in
+        // `update_send_state()`. So here we need to handle the transition from
+        // states 2 to 3. We need to replace the local echo by the remote echo,
+        // which might have more data, like the raw JSON.
         let related_events = self.related_events.entry(related_to).or_default();
         if let Some(pos) = related_events.iter().position(|agg| agg.own_id == aggregation.own_id) {
             related_events.remove(pos);
@@ -654,9 +634,9 @@ impl Aggregations {
     /// If so, unapplies it by replacing the corresponding related item, if
     /// needs be.
     ///
-    /// Returns true if an aggregation was found. This doesn't mean
-    /// the underlying item has been updated, if it was missing from the
-    /// timeline for instance.
+    /// Returns true if an aggregation was found. This doesn't mean the
+    /// underlying item has been updated, if it was missing from the timeline
+    /// for instance.
     ///
     /// May return an error if it found an aggregation, but it couldn't be
     /// properly applied.
@@ -674,8 +654,8 @@ impl Aggregations {
                 .position(|agg| agg.own_id == *aggregation_id)
                 .map(|idx| aggregations.remove(idx));
 
-            // If this was the last aggregation, remove the entry in the `related_events`
-            // mapping.
+            // If this was the last aggregation, remove the entry in the
+            // `related_events` mapping.
             if aggregations.is_empty() {
                 self.related_events.remove(found);
             }
@@ -708,19 +688,34 @@ impl Aggregations {
                     warn!("error when unapplying aggregation: {err}");
                 }
                 ApplyAggregationResult::Edit => {
-                    // This edit has been removed; try to find another that still applies.
+                    // This edit has been removed; try to find another that
+                    // still applies.
                     let resolved = self
                         .related_events
                         .get(found)
                         .is_some_and(|aggregations| resolve_edits(aggregations, items, &mut cowed));
-                    // Otherwise nothing is pending anymore.
-                    // TODO likely need to change the item to indicate
-                    // it's been un-edited etc.
+                    // Otherwise nothing is pending anymore: put back what our
+                    // edits replaced.
                     if !resolved {
-                        if cowed.edit_send_state.is_none() {
+                        if cowed.unedited_kind.is_none() && cowed.edit_send_state.is_none() {
                             return Ok(true);
                         }
-                        cowed.to_mut().edit_send_state = None;
+                        let item = cowed.to_mut();
+                        if let Some(kind) = item.unedited_kind.take().map(|kind| *kind)
+                            && let TimelineItemContent::MsgLike(content) = &item.content
+                        {
+                            // A poll's votes live in the state an edit carries
+                            // over, so only put back the fields the edit
+                            // replaced.
+                            let kind = match (kind, &content.kind) {
+                                (MsgLikeKind::Poll(unedited), MsgLikeKind::Poll(current)) => {
+                                    MsgLikeKind::Poll(current.unedit(&unedited))
+                                }
+                                (kind, _) => kind,
+                            };
+                            item.content = TimelineItemContent::MsgLike(content.with_kind(kind));
+                        }
+                        item.edit_send_state = None;
                     }
                     items.replace(
                         item_pos,
@@ -800,7 +795,8 @@ impl Aggregations {
 
         // Update the aggregations in the `related_events` field.
         if let Some(aggregations) = self.related_events.remove(&from) {
-            // Update the inverted mappings (from aggregation's id, to the new target id).
+            // Update the inverted mappings (from aggregation's id, to the new
+            // target id).
             for a in &aggregations {
                 if let Some(prev_target) = self.inverted_map.remove(&a.own_id) {
                     debug_assert_eq!(prev_target, from);
@@ -839,8 +835,8 @@ impl Aggregations {
                 .get(&target)
                 .is_some_and(|aggs| aggs.iter().any(|agg| agg.own_id == to));
             if remote_echo_received {
-                // The remote echo got there first: forget the local echo and let the remote
-                // one settle the item.
+                // The remote echo got there first: forget the local echo and
+                // let the remote one settle the item.
                 let remote = self.related_events.get_mut(&target).and_then(|aggs| {
                     aggs.retain(|agg| agg.own_id != from);
                     aggs.iter().find(|agg| agg.own_id == to).cloned()
@@ -895,6 +891,45 @@ impl Aggregations {
         true
     }
 
+    /// Replace the content of one of our pending message edits, e.g. once the
+    /// media it carries has been uploaded.
+    ///
+    /// Returns whether a matching edit has been found.
+    pub fn replace_local_edit(
+        &mut self,
+        txn_id: &TransactionId,
+        replacement: Replacement<RoomMessageEventContentWithoutRelation>,
+        items: &mut ObservableItemsTransaction<'_>,
+        rules: &RoomVersionRules,
+    ) -> bool {
+        let from = TimelineEventItemId::TransactionId(txn_id.to_owned());
+
+        let Some(target) = self.inverted_map.get(&from).cloned() else {
+            return false;
+        };
+
+        let Some(found) = self
+            .related_events
+            .get_mut(&target)
+            .and_then(|aggs| aggs.iter_mut().find(|agg| agg.own_id == from))
+        else {
+            return false;
+        };
+
+        let AggregationKind::Edit(PendingEdit { kind: PendingEditKind::RoomMessage(prev), .. }) =
+            &mut found.kind
+        else {
+            return false;
+        };
+
+        *prev = replacement;
+
+        let updated = found.clone();
+        find_item_and_apply_aggregation(self, items, &target, updated, rules);
+
+        true
+    }
+
     /// Returns the id of the event this aggregation relates to, if it's a known
     /// aggregation.
     pub fn is_aggregation_of(&self, item: &TimelineEventItemId) -> Option<&TimelineEventItemId> {
@@ -913,6 +948,22 @@ impl Aggregations {
             matches!(&agg.kind, AggregationKind::Reaction { key: k, sender: s, .. } if k == key && s == sender)
         })
     }
+
+    /// The send handle of our earliest pending aggregation of some kind on
+    /// `target`, i.e. the only one that can be wedged, since the ones behind it
+    /// are waiting on it to go out.
+    pub fn pending_send_handle(
+        &self,
+        target: &TimelineEventItemId,
+        matches_kind: impl Fn(&AggregationKind) -> bool,
+    ) -> Option<SendHandle> {
+        self.related_events
+            .get(target)?
+            .iter()
+            .find(|agg| agg.is_local() && matches_kind(&agg.kind))?
+            .send_handle
+            .clone()
+    }
 }
 
 /// Look at all the edits of a given event, and apply the most recent one, if
@@ -924,17 +975,17 @@ fn resolve_edits(
     items: &ObservableItemsTransaction<'_>,
     event: &mut Cow<'_, EventTimelineItem>,
 ) -> bool {
-    // A tuple of the best edit, if we have found one and a boolean indicating if
-    // the edit is coming from a local echo. If it's from a local echo, we can't
-    // validate it as we don't have a raw JSON, but this isn't that important as
-    // we're sure we won't send ourselves invalid edits.
+    // A tuple of the best edit, if we have found one and a boolean indicating
+    // if the edit is coming from a local echo. If it's from a local echo, we
+    // can't validate it as we don't have a raw JSON, but this isn't that
+    // important as we're sure we won't send ourselves invalid edits.
     let mut best_edit: Option<(PendingEdit, bool)> = None;
     let mut best_edit_pos = None;
 
     for a in aggregations {
         if let AggregationKind::Edit(pending_edit) = &a.kind {
-            // One of our own edits is always the most recent, even once sent but not
-            // echoed yet.
+            // One of our own edits is always the most recent, even once sent
+            // but not echoed yet.
             if a.send_state.is_some() {
                 best_edit = Some((pending_edit.clone(), true));
                 break;
@@ -942,22 +993,25 @@ fn resolve_edits(
 
             match &a.own_id {
                 TimelineEventItemId::TransactionId(_) => {
-                    // A local echo is always the most recent edit: use this one.
+                    // A local echo is always the most recent edit: use this
+                    // one.
                     best_edit = Some((pending_edit.clone(), true));
                     break;
                 }
 
                 TimelineEventItemId::EventId(event_id) => {
                     if let Some(best_edit_pos) = &mut best_edit_pos {
-                        // Find the position of the timeline owning the edit: either the bundled
-                        // item owner if this was a bundled edit, or the edit event itself.
+                        // Find the position of the timeline owning the edit:
+                        // either the bundled item owner if this was a bundled
+                        // edit, or the edit event itself.
                         let pos = items.position_by_event_id(
                             pending_edit.bundled_item_owner.as_ref().unwrap_or(event_id),
                         );
 
                         if let Some(pos) = pos {
-                            // If the edit is more recent (higher index) than the previous best
-                            // edit we knew about, use this one.
+                            // If the edit is more recent (higher index) than
+                            // the previous best edit we knew about, use this
+                            // one.
                             if pos > *best_edit_pos {
                                 best_edit = Some((pending_edit.clone(), false));
                                 *best_edit_pos = pos;
@@ -966,17 +1020,17 @@ fn resolve_edits(
                         } else {
                             trace!(edit_id = ?a.own_id, "couldn't find timeline meta for edit event");
 
-                            // The edit event isn't in the timeline, so it might be a bundled
-                            // edit. In this case, record it as the best edit if and only if
-                            // there wasn't any other.
+                            // The edit event isn't in the timeline, so it might
+                            // be a bundled edit. In this case, record it as the
+                            // best edit if and only if there wasn't any other.
                             if best_edit.is_none() {
                                 best_edit = Some((pending_edit.clone(), false));
                                 trace!(?best_edit_pos, edit_id = ?a.own_id, "found bundled edit");
                             }
                         }
                     } else {
-                        // There wasn't any best edit yet, so record this one as being it, with
-                        // its position.
+                        // There wasn't any best edit yet, so record this one as
+                        // being it, with its position.
                         best_edit = Some((pending_edit.clone(), false));
                         best_edit_pos = items.position_by_event_id(event_id);
                         trace!(?best_edit_pos, edit_id = ?a.own_id, "first best edit");
@@ -988,7 +1042,13 @@ fn resolve_edits(
 
     if let Some((edit, is_local_echo)) = best_edit {
         if edit_item(event, edit, is_local_echo) {
-            event.to_mut().edit_send_state = edit_send_state(aggregations);
+            let send_state = edit_send_state(aggregations);
+            let item = event.to_mut();
+            if send_state.is_none() {
+                // No edit of ours is pending anymore, so drop the snapshot too.
+                item.unedited_kind = None;
+            }
+            item.edit_send_state = send_state;
             true
         } else {
             false
@@ -1010,8 +1070,8 @@ fn edit_item(
     // We can receive edits from a local echo, i.e. the edit wasn't yet received
     // from the homeserver.
     //
-    // Before we send an edit we check that the event is allowed to be edited and
-    // that the replacement content is allowed.
+    // Before we send an edit we check that the event is allowed to be edited
+    // and that the replacement content is allowed.
     //
     // We don't have yet a full JSON of the event, so we can't do the validation
     // here.
@@ -1058,10 +1118,13 @@ fn edit_item(
             let mut new_msg = msg.clone();
             new_msg.apply_edit(replacement.new_content);
 
-            let new_item = item.with_content_and_latest_edit(
+            let mut new_item = item.with_content_and_latest_edit(
                 TimelineItemContent::MsgLike(content.with_kind(MsgLikeKind::Message(new_msg))),
                 edit_json,
             );
+            if is_local_echo && item.edit_send_state.is_none() {
+                new_item.unedited_kind = Some(Box::new(MsgLikeKind::Message(msg.clone())));
+            }
             *item = Cow::Owned(new_item);
         }
 
@@ -1071,12 +1134,15 @@ fn edit_item(
         ) => {
             // Second combination: it's a poll edit for a poll. Good.
             if let Some(new_poll_state) = poll_state.edit(replacement.new_content) {
-                let new_item = item.with_content_and_latest_edit(
+                let mut new_item = item.with_content_and_latest_edit(
                     TimelineItemContent::MsgLike(
                         content.with_kind(MsgLikeKind::Poll(new_poll_state)),
                     ),
                     edit_json,
                 );
+                if is_local_echo && item.edit_send_state.is_none() {
+                    new_item.unedited_kind = Some(Box::new(MsgLikeKind::Poll(poll_state.clone())));
+                }
                 *item = Cow::Owned(new_item);
             } else {
                 // The poll has ended, so we can't edit it anymore.
@@ -1112,8 +1178,8 @@ fn same_send_state_kind(a: Option<&EventSendState>, b: Option<&EventSendState>) 
     }
 }
 
-/// The send state to expose for an item's edits: a failed edit blocks the
-/// later ones, so it wins over pending, which wins over sent.
+/// The send state to expose for an item's edits: a failed edit blocks the later
+/// ones, so it wins over pending, which wins over sent.
 fn edit_send_state(aggregations: &[Aggregation]) -> Option<EventSendState> {
     let rank = |s: &EventSendState| match s {
         EventSendState::SendingFailed { .. } => 2,

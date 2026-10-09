@@ -151,11 +151,11 @@ impl RoomLatestEventsWriteGuard {
     /// Update the latest events for the room and its threads, based on the
     /// event cache data.
     pub async fn update_with_event_cache(&mut self) {
-        // Get the power levels of the user for the current room if the `WeakRoom` is
-        // still valid.
+        // Get the power levels of the user for the current room if the
+        // `WeakRoom` is still valid.
         //
-        // Get it once for all the updates of all the latest events for this room (be
-        // the room and its threads).
+        // Get it once for all the updates of all the latest events for this
+        // room (be the room and its threads).
         let Some(room) = self.inner.weak_room.get() else {
             // No room? Let's stop the update.
             error!(room = ?self.inner.weak_room, "Room is unknown");
@@ -173,8 +173,8 @@ impl RoomLatestEventsWriteGuard {
         let room_event_cache = match inner
             .room_event_cache
             .get_or_try_init(|| async {
-                // It's fine to drop the `EventCacheDropHandles` here as the caller
-                // (`LatestEventState`) owns a clone of the `EventCache`.
+                // It's fine to drop the `EventCacheDropHandles` here as the
+                // caller (`LatestEventState`) owns a clone of the `EventCache`.
                 let (room_event_cache, _drop_handles) =
                     inner.event_cache.room(room.room_id()).await?;
 
@@ -207,14 +207,14 @@ impl RoomLatestEventsWriteGuard {
         }
     }
 
-    /// Update the latest events for the room and its threads, based on the
-    /// send queue update.
+    /// Update the latest events for the room and its threads, based on the send
+    /// queue update.
     pub async fn update_with_send_queue(&mut self, send_queue_update: &RoomSendQueueUpdate) {
-        // Get the power levels of the user for the current room if the `WeakRoom` is
-        // still valid.
+        // Get the power levels of the user for the current room if the
+        // `WeakRoom` is still valid.
         //
-        // Get it once for all the updates of all the latest events for this room (be
-        // the room and its threads).
+        // Get it once for all the updates of all the latest events for this
+        // room (be the room and its threads).
         let Some(room) = self.inner.weak_room.get() else {
             // No room? Let's stop the update.
             return;
@@ -230,8 +230,8 @@ impl RoomLatestEventsWriteGuard {
         let room_event_cache = match inner
             .room_event_cache
             .get_or_try_init(|| async {
-                // It's fine to drop the `EventCacheDropHandles` here as the caller
-                // (`LatestEventState`) owns a clone of the `EventCache`.
+                // It's fine to drop the `EventCacheDropHandles` here as the
+                // caller (`LatestEventState`) owns a clone of the `EventCache`.
                 let (room_event_cache, _drop_handles) =
                     inner.event_cache.room(room.room_id()).await?;
 
@@ -305,9 +305,10 @@ impl RoomLatestEventsWriteGuard {
         let power_levels = power_levels.cloned();
 
         // This filters each batch to spot a candidate and `Builder::new_remote`
-        // filters the same events again when it computes the value afterwards. That
-        // second pass can't be skipped though as an event's edits are newer than it
-        // and a stop condition only ever sees the batch it just loaded.
+        // filters the same events again when it computes the value afterwards.
+        // That second pass can't be skipped though as an event's edits are
+        // newer than it and a stop condition only ever sees the batch it just
+        // loaded.
         let stop = move |outcome: &BackPaginationOutcome| {
             let found = outcome.events.iter().any(|event| {
                 filter_timeline_event(event, None, &own_user_id, power_levels.as_ref()).is_break()
@@ -325,8 +326,8 @@ impl RoomLatestEventsWriteGuard {
             batch_size: back_pagination_queue::BATCH_SIZE,
             max_batches: None,
         }) {
-            // Nobody awaits the result, so detach the handle to let the request run to
-            // completion instead of cancelling it on drop.
+            // Nobody awaits the result, so detach the handle to let the request
+            // run to completion instead of cancelling it on drop.
             Ok(handle) => handle.detach(),
             Err(err) => warn!("couldn't enqueue a latest-event backfill request: {err}"),
         }
@@ -338,8 +339,13 @@ mod tests {
     use assert_matches::assert_matches;
     use matrix_sdk_base::{
         RoomState,
-        event_cache::Gap,
+        cross_process_lock::CrossProcessLockConfig,
+        event_cache::{
+            Gap,
+            store::{EventCacheStore, MemoryStore},
+        },
         linked_chunk::{ChunkIdentifier, LinkedChunkId, Update},
+        store::StoreConfig,
     };
     use matrix_sdk_test::{async_test, event_factory::EventFactory};
     use ruma::{event_id, room_id, user_id};
@@ -360,25 +366,12 @@ mod tests {
         let room_id = room_id!("!r0");
         let sender = user_id!("@bob:example.org");
 
-        let server = MatrixMockServer::new().await;
-        let client = server
-            .client_builder()
-            .on_builder(|builder| builder.with_enable_automatic_back_pagination(true))
-            .build()
-            .await;
+        let event_cache_store = MemoryStore::new();
 
-        client.base_client().get_or_create_room(room_id, RoomState::Joined);
-
-        // A linked chunk with a single gap: no events in memory (so no candidate),
-        // but a token to paginate from. Set up directly so no sync (and thus no
-        // competing read-receipt pagination) races the backfill.
-        client
-            .event_cache_store()
-            .lock()
-            .await
-            .unwrap()
-            .as_clean()
-            .unwrap()
+        // A linked chunk with a single gap: no events in memory (so no
+        // candidate), but a token to paginate from. Set up directly so no sync
+        // (and thus no competing read-receipt pagination) races the backfill.
+        event_cache_store
             .handle_linked_chunk_updates(
                 LinkedChunkId::Room(room_id),
                 vec![Update::NewGapChunk {
@@ -391,8 +384,23 @@ mod tests {
             .await
             .unwrap();
 
+        let server = MatrixMockServer::new().await;
+        let client = server
+            .client_builder()
+            .on_builder(|builder| {
+                builder.with_enable_automatic_back_pagination(true).store_config(
+                    StoreConfig::new(CrossProcessLockConfig::MultiProcess {
+                        holder_name: "foo".to_owned(),
+                    })
+                    .event_cache_store(event_cache_store),
+                )
+            })
+            .build()
+            .await;
+
+        client.base_client().get_or_create_room(room_id, RoomState::Joined);
+
         let event_cache = client.event_cache();
-        event_cache.subscribe().unwrap();
 
         // A displayable message lives behind the gap.
         let f = EventFactory::new().room(room_id).sender(sender);
@@ -418,8 +426,8 @@ mod tests {
 
         room_latest_events.write().await.update_with_event_cache().await;
 
-        // The backfill runs in the background; wait for the events it loads, then
-        // recompute as the update it emits would.
+        // The backfill runs in the background; wait for the events it loads,
+        // then recompute as the update it emits would.
         assert_let_timeout!(Ok(_) = updates.recv());
 
         room_latest_events.write().await.update_with_event_cache().await;

@@ -23,7 +23,6 @@ use std::{
 
 use as_variant::as_variant;
 use assert_matches::assert_matches;
-use assert_matches2::assert_let;
 use eyeball_im::VectorDiff;
 use matrix_sdk::{
     self, Client, assert_next_matches_with_timeout, assert_next_with_timeout,
@@ -45,6 +44,7 @@ use ruma::{
     user_id,
 };
 use serde_json::{json, value::to_raw_value};
+use strass::assert_let;
 use stream_assert::{assert_next_matches, assert_pending};
 use tokio::time::sleep;
 
@@ -82,7 +82,6 @@ pub(super) async fn get_client(
     } else {
         server.client_builder().logged_in_with_oauth().build().await
     };
-    client.event_cache().subscribe().unwrap();
 
     let event_factory = EventFactory::new().room(room_id);
     let member_event = event_factory.member(client.user_id().unwrap()).display_name("Alice");
@@ -266,9 +265,8 @@ async fn test_false_positive_late_decryption_regression() {
 
     sleep(Duration::from_millis(200)).await;
 
-    // Simulate a retry decryption.
-    // Due to the regression this was marking the event as successfully decrypted on
-    // retry
+    // Simulate a retry decryption. Due to the regression this was marking the
+    // event as successfully decrypted on retry
     timeline
         .controller
         .retry_event_decryption(Some(iter::once(SESSION_ID.to_owned()).collect()))
@@ -281,8 +279,8 @@ async fn test_false_positive_late_decryption_regression() {
     {
         let utds = hook.utds.lock().unwrap();
         assert_eq!(utds.len(), 1);
-        // This is the main thing we're testing: if this wasn't identified as a definite
-        // UTD, this would be `Some(..)`.
+        // This is the main thing we're testing: if this wasn't identified as a
+        // definite UTD, this would be `Some(..)`.
         assert!(utds[0].time_to_decrypt.is_none());
     }
 }
@@ -407,7 +405,8 @@ async fn test_retry_edit_decryption() {
     // Then first, the first item gets decrypted on its own
     assert_next_matches_with_timeout!(stream, VectorDiff::Set { index: 0, .. });
 
-    // And second, they get resolved into a single event after the edit is decrypted
+    // And second, they get resolved into a single event after the edit is
+    // decrypted
     assert_next_matches_with_timeout!(stream, VectorDiff::Set { index: 0, value } => value);
     let item =
         assert_next_matches_with_timeout!(stream, VectorDiff::Set { index: 0, value } => value);
@@ -465,8 +464,8 @@ async fn test_retry_edit_and_more() {
     let timeline = room.timeline().await.unwrap();
     let (_, mut stream) = timeline.subscribe_filter_map(|e| e.as_event().cloned()).await;
 
-    // Given the timeline contains an event and an edit of that event, and another
-    // event, all UTD.
+    // Given the timeline contains an event and an edit of that event, and
+    // another event, all UTD.
 
     let event = event_factory
         .event(encrypted_message(
@@ -568,8 +567,8 @@ async fn test_retry_edit_and_more() {
 
     let items = timeline.items().await;
 
-    // We're left with 3 items, the zeroth one is the date divider and the next two
-    // are the messages.
+    // We're left with 3 items, the zeroth one is the date divider and the next
+    // two are the messages.
     assert!(items[0].is_date_divider());
     assert_eq!(items.len(), 3);
 }

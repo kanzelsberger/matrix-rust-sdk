@@ -28,8 +28,8 @@ use tracing::{error, info, instrument, trace, warn};
 
 use crate::{Room, event_cache::RoomEventCache, room::WeakRoom, send_queue::RoomSendQueueUpdate};
 
-/// Whether back-paginating a room could give its latest event a value it
-/// cannot compute from what's currently in memory.
+/// Whether back-paginating a room could give its latest event a value it cannot
+/// compute from what's currently in memory.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum NeedMoreEvents {
     Yes,
@@ -107,9 +107,9 @@ impl LatestEvent {
         power_levels: Option<&RoomPowerLevels>,
     ) -> NeedMoreEvents {
         if self.buffer_of_values_for_local_events.is_empty().not() {
-            // At least one `LatestEventValue` exists for local events (i.e. coming from the
-            // send queue). In this case, we don't overwrite the current value with a newly
-            // computed one from the event cache.
+            // At least one `LatestEventValue` exists for local events (i.e.
+            // coming from the send queue). In this case, we don't overwrite the
+            // current value with a newly computed one from the event cache.
             return NeedMoreEvents::No;
         }
 
@@ -164,23 +164,29 @@ impl LatestEvent {
         room: Room,
         reasons: RoomInfoNotableUpdateReasons,
     ) {
-        // If the `RoomInfo` has been updated due to a change of the own membership.
+        // If the `RoomInfo` has been updated due to a change of the own
+        // membership.
         if reasons.contains(RoomInfoNotableUpdateReasons::MEMBERSHIP) {
             let new_value = match room.state() {
-                // If the room' state is `Invited`, it means the current user has been recently
-                // invited to this room.
+                // If the room' state is `Invited`, it means the current user
+                // has been recently invited to this room.
                 RoomState::Invited => {
-                    // Short: Let's not update a `RemoteInvite` to another `RemoteInvite`.
+                    // Short: Let's not update a `RemoteInvite` to another
+                    // `RemoteInvite`.
                     //
-                    // Long: An invite room is only constituted of stripped-state events. These
-                    // events do not have an `origin_server_ts` field. It means we cannot compute
-                    // the timestamp of the `LatestEventValue`. To workaround this, we set the
-                    // timestamp to `now()`. See `Builder::new_remote_for_invite` to learn more.
-                    // If an invite room receives a new event, its `LatestEventValue`'s timestamp
-                    // will be updated to `now()`, which will make the room bumps to the top of the
-                    // room list for example. This is not an acceptable behaviour because it can be
-                    // an “attack vector”, i.e. a way to annoy people with spammy invites. That's
-                    // why, once a `RemoteInvite` has been computed, we do not refresh it.
+                    // Long: An invite room is only constituted of
+                    // stripped-state events. These events do not have an
+                    // `origin_server_ts` field. It means we cannot compute the
+                    // timestamp of the `LatestEventValue`. To workaround this,
+                    // we set the timestamp to `now()`. See
+                    // `Builder::new_remote_for_invite` to learn more. If an
+                    // invite room receives a new event, its
+                    // `LatestEventValue`'s timestamp will be updated to
+                    // `now()`, which will make the room bumps to the top of the
+                    // room list for example. This is not an acceptable
+                    // behaviour because it can be an “attack vector”, i.e. a
+                    // way to annoy people with spammy invites. That's why, once
+                    // a `RemoteInvite` has been computed, we do not refresh it.
                     if matches!(
                         self.current_value.read().await.deref(),
                         LatestEventValue::RemoteInvite { .. }
@@ -216,16 +222,17 @@ impl LatestEvent {
     /// been found, we want to latest event value to be `None`, so that it is
     /// erased correctly.
     async fn update(&mut self, new_value: LatestEventValue) {
-        // Ideally, we would set `new_value` if and only if it is different from the
-        // previous value. However, `LatestEventValue` cannot implement `PartialEq` at
-        // the time of writing (2025-12-12). So we are only updating if:
+        // Ideally, we would set `new_value` if and only if it is different from
+        // the previous value. However, `LatestEventValue` cannot implement
+        // `PartialEq` at the time of writing (2025-12-12). So we are only
+        // updating if:
         //
         // - if `LatestEventValue` and the previous value aren't `None`,
         // - if the event IDs are different.
         //
-        // We must be careful when comparing the event IDs: `None` and `Local*` have no
-        // event ID, we can't compare them at this point. Hence the `match` statement to
-        // have a fine-grained decision.
+        // We must be careful when comparing the event IDs: `None` and `Local*`
+        // have no event ID, we can't compare them at this point. Hence the
+        // `match` statement to have a fine-grained decision.
         {
             let mut guard = self.current_value.write().await;
             let previous_value = guard.deref();
@@ -244,8 +251,9 @@ impl LatestEvent {
                     LatestEventValue::LocalIsSending(_) | LatestEventValue::LocalCannotBeSent(_),
                 ) => true,
 
-                // If both event IDs are known, do an update if they're different.
-                // If either is unknown, the two values cannot be compared, so do an update.
+                // If both event IDs are known, do an update if they're
+                // different. If either is unknown, the two values cannot be
+                // compared, so do an update.
                 (previous, new) => match (previous.event_id(), new.event_id()) {
                     (Some(previous_event_id), Some(new_event_id)) => {
                         previous_event_id != new_event_id
@@ -257,7 +265,8 @@ impl LatestEvent {
             if do_update {
                 ObservableWriteGuard::set(&mut guard, new_value.clone());
 
-                // Release the write guard over the current value before hitting the store.
+                // Release the write guard over the current value before hitting
+                // the store.
                 drop(guard);
 
                 self.store(new_value).await;
@@ -340,6 +349,7 @@ mod tests_latest_event {
     use assert_matches::assert_matches;
     use matrix_sdk_base::{
         RoomInfoNotableUpdateReasons, RoomState,
+        event_cache::store::{EventCacheStore, MemoryStore},
         latest_event::RemoteLatestEventValue,
         linked_chunk::{ChunkIdentifier, LinkedChunkId, Position, Update},
         store::{SerializableEventContent, StoreConfig},
@@ -359,7 +369,7 @@ mod tests_latest_event {
         client::WeakClient,
         room::WeakRoom,
         send_queue::{LocalEcho, LocalEchoContent, RoomSendQueue, RoomSendQueueUpdate, SendHandle},
-        test_utils::mocks::MatrixMockServer,
+        test_utils::{client::MockClientBuilder, mocks::MatrixMockServer},
     };
 
     fn new_local_echo_content(
@@ -435,10 +445,6 @@ mod tests_latest_event {
         // Create the room.
         client.base_client().get_or_create_room(room_id, RoomState::Joined);
         let weak_room = WeakRoom::new(weak_client, room_id.to_owned());
-
-        // Get a `RoomEventCache`.
-        let event_cache = client.event_cache();
-        event_cache.subscribe().unwrap();
 
         let mut latest_event = LatestEvent::new(&weak_room, None);
 
@@ -559,8 +565,8 @@ mod tests_latest_event {
         latest_event.update(LatestEventValue::LocalIsSending(local_room_message("foo"))).await;
         assert_next_matches!(stream, LatestEventValue::LocalIsSending(_));
 
-        // An invite computed from stripped state events has no event ID either, but
-        // both values are obviously different: this must not be ignored.
+        // An invite computed from stripped state events has no event ID either,
+        // but both values are obviously different: this must not be ignored.
         latest_event
             .update(LatestEventValue::RemoteInvite {
                 event_id: None,
@@ -624,23 +630,9 @@ mod tests_latest_event {
         let user_id = user_id!("@mnt_io:matrix.org");
         let event_factory = EventFactory::new().sender(user_id).room(&room_id);
 
-        let server = MatrixMockServer::new().await;
-        let client = server.client_builder().build().await;
-        client.base_client().get_or_create_room(&room_id, RoomState::Joined);
-        let room = client.get_room(&room_id).unwrap();
-        let weak_room = WeakRoom::new(WeakClient::from_client(&client), room_id.clone());
-
-        let event_cache = client.event_cache();
-        event_cache.subscribe().unwrap();
-
         // Fill the event cache with one event.
-        client
-            .event_cache_store()
-            .lock()
-            .await
-            .expect("Could not acquire the event cache lock")
-            .as_clean()
-            .expect("Could not acquire a clean event cache lock")
+        let event_cache_store = MemoryStore::new();
+        event_cache_store
             .handle_linked_chunk_updates(
                 LinkedChunkId::Room(&room_id),
                 vec![
@@ -658,6 +650,24 @@ mod tests_latest_event {
             .await
             .unwrap();
 
+        let client = MockClientBuilder::new(None)
+            .on_builder(move |builder| {
+                builder.store_config(
+                    StoreConfig::new(CrossProcessLockConfig::MultiProcess {
+                        holder_name: "foo".to_owned(),
+                    })
+                    .event_cache_store(event_cache_store),
+                )
+            })
+            .build()
+            .await;
+
+        client.base_client().get_or_create_room(&room_id, RoomState::Joined);
+
+        let room = client.get_room(&room_id).unwrap();
+        let weak_room = WeakRoom::new(WeakClient::from_client(&client), room_id.clone());
+
+        let event_cache = client.event_cache();
         let (room_event_cache, _) = event_cache.room(&room_id).await.unwrap();
 
         let send_queue = client.send_queue();
@@ -665,7 +675,8 @@ mod tests_latest_event {
 
         let mut latest_event = LatestEvent::new(&weak_room, None);
 
-        // First, let's create a `LatestEventValue` from the event cache. It must work.
+        // First, let's create a `LatestEventValue` from the event cache. It
+        // must work.
         {
             latest_event.update_with_event_cache(&room_event_cache, user_id, None).await;
 
@@ -704,8 +715,8 @@ mod tests_latest_event {
             );
         }
 
-        // Fourth, let's a `LatestEventValue` from the send queue. It must stay the
-        // same, but now the local event is sent.
+        // Fourth, let's a `LatestEventValue` from the send queue. It must stay
+        // the same, but now the local event is sent.
         {
             let update = RoomSendQueueUpdate::SentEvent {
                 transaction_id,
@@ -720,8 +731,8 @@ mod tests_latest_event {
             );
         }
 
-        // Finally, let's create a `LatestEventValue` from the event cache. _Now_ it's
-        // possible, because there is no more local events.
+        // Finally, let's create a `LatestEventValue` from the event cache.
+        // _Now_ it's possible, because there is no more local events.
         {
             latest_event.update_with_event_cache(&room_event_cache, user_id, None).await;
 
@@ -735,26 +746,12 @@ mod tests_latest_event {
         let user_id = user_id!("@mnt_io:matrix.org");
         let event_factory = EventFactory::new().sender(user_id).room(&room_id);
 
-        let server = MatrixMockServer::new().await;
-        let client = server.client_builder().build().await;
-        client.base_client().get_or_create_room(&room_id, RoomState::Joined);
-        let _room = client.get_room(&room_id).unwrap();
-        let weak_room = WeakRoom::new(WeakClient::from_client(&client), room_id.clone());
-
-        let event_cache = client.event_cache();
-        event_cache.subscribe().unwrap();
-
         let event_id_0 = event_id!("$ev0");
         let event_id_1 = event_id!("$ev1");
 
         // Fill the event cache with two events.
-        client
-            .event_cache_store()
-            .lock()
-            .await
-            .expect("Could not acquire the event cache lock")
-            .as_clean()
-            .expect("Could not acquire a clean event cache lock")
+        let event_cache_store = MemoryStore::new();
+        event_cache_store
             .handle_linked_chunk_updates(
                 LinkedChunkId::Room(&room_id),
                 vec![
@@ -775,6 +772,26 @@ mod tests_latest_event {
             .await
             .unwrap();
 
+        let server = MatrixMockServer::new().await;
+        let client = server
+            .client_builder()
+            .on_builder(move |builder| {
+                builder.store_config(
+                    StoreConfig::new(CrossProcessLockConfig::MultiProcess {
+                        holder_name: "foo".to_owned(),
+                    })
+                    .event_cache_store(event_cache_store),
+                )
+            })
+            .build()
+            .await;
+
+        client.base_client().get_or_create_room(&room_id, RoomState::Joined);
+
+        let _room = client.get_room(&room_id).unwrap();
+        let weak_room = WeakRoom::new(WeakClient::from_client(&client), room_id.clone());
+
+        let event_cache = client.event_cache();
         let (room_event_cache, _) = event_cache.room(&room_id).await.unwrap();
 
         let mut latest_event = LatestEvent::new(&weak_room, None);
@@ -825,8 +842,29 @@ mod tests_latest_event {
 
         let server = MatrixMockServer::new().await;
 
+        // Fill the event cache with one event.
+        let event_cache_store = MemoryStore::new();
+        event_cache_store
+            .handle_linked_chunk_updates(
+                LinkedChunkId::Room(&room_id),
+                vec![
+                    Update::NewItemsChunk {
+                        previous: None,
+                        new: ChunkIdentifier::new(0),
+                        next: None,
+                    },
+                    Update::PushItems {
+                        at: Position::new(ChunkIdentifier::new(0), 0),
+                        items: vec![event_factory.text_msg("A").event_id(event_id!("$ev0")).into()],
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+
         let store_config =
-            StoreConfig::new(CrossProcessLockConfig::multi_process("cross-process-lock-holder"));
+            StoreConfig::new(CrossProcessLockConfig::multi_process("cross-process-lock-holder"))
+                .event_cache_store(event_cache_store);
 
         // Load the client for the first time, and run some operations.
         {
@@ -840,35 +878,6 @@ mod tests_latest_event {
             let weak_room = WeakRoom::new(WeakClient::from_client(&client), room_id.clone());
 
             let event_cache = client.event_cache();
-            event_cache.subscribe().unwrap();
-
-            // Fill the event cache with one event.
-            client
-                .event_cache_store()
-                .lock()
-                .await
-                .expect("Could not acquire the event cache lock")
-                .as_clean()
-                .expect("Could not acquire a clean event cache lock")
-                .handle_linked_chunk_updates(
-                    LinkedChunkId::Room(&room_id),
-                    vec![
-                        Update::NewItemsChunk {
-                            previous: None,
-                            new: ChunkIdentifier::new(0),
-                            next: None,
-                        },
-                        Update::PushItems {
-                            at: Position::new(ChunkIdentifier::new(0), 0),
-                            items: vec![
-                                event_factory.text_msg("A").event_id(event_id!("$ev0")).into(),
-                            ],
-                        },
-                    ],
-                )
-                .await
-                .unwrap();
-
             let (room_event_cache, _) = event_cache.room(&room_id).await.unwrap();
 
             // Check there is no `LatestEventValue` for the moment.
@@ -905,8 +914,8 @@ mod tests_latest_event {
             }
         }
 
-        // Reload the client with the same store config, and see the `LatestEventValue`
-        // is inside the `RoomInfo`.
+        // Reload the client with the same store config, and see the
+        // `LatestEventValue` is inside the `RoomInfo`.
         {
             let client = server
                 .client_builder()

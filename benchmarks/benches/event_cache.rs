@@ -34,18 +34,20 @@ fn handle_room_updates(c: &mut Criterion) {
     const NUM_EVENTS: usize = 1000;
 
     for num_rooms in [1, 10, 100] {
-        // Add some joined rooms, each with NUM_EVENTS in it, to the sync response.
+        // Add some joined rooms, each with NUM_EVENTS in it, to the sync
+        // response.
         let mut room_updates = RoomUpdates::default();
 
         let mut changes = matrix_sdk::StateChanges::default();
 
         for i in 0..num_rooms {
-            // Synapse's room IDs for rooms v1 to v11 have an 18 characters localpart.
+            // Synapse's room IDs for rooms v1 to v11 have an 18 characters
+            // localpart.
             let raw_room_id = format!("!firstbatchroom{i:04}:example.com");
 
             let room_id = if i % 10 == 9 {
-                // Make 1 in 10 rooms use a room v12 ID, which is a base64 hash similar to an
-                // event ID.
+                // Make 1 in 10 rooms use a room v12 ID, which is a base64 hash
+                // similar to an event ID.
                 RoomId::new_v2(&base64_sha256_hash(raw_room_id.as_bytes())).unwrap()
             } else {
                 OwnedRoomId::try_from(raw_room_id).unwrap()
@@ -75,7 +77,8 @@ fn handle_room_updates(c: &mut Criterion) {
                 Box::new(move || {
                     let temp_dir = temp_dir.clone();
                     Box::pin(async move {
-                        // Remove all the files in the temp_dir, to reset the event cache state.
+                        // Remove all the files in the temp_dir, to reset the
+                        // event cache state.
                         for entry in temp_dir.path().read_dir().unwrap() {
                             let entry = entry.unwrap();
                             let path = entry.path();
@@ -107,26 +110,22 @@ fn handle_room_updates(c: &mut Criterion) {
             let client = runtime.block_on(async {
                 let event_cache_store = store_builder().await;
 
-                let client = MockClientBuilder::new(None)
+                MockClientBuilder::new(None)
                     .on_builder(|builder| {
                         builder.store_config(
                             StoreConfig::new(CrossProcessLockConfig::multi_process(
                                 "cross-process-store-locks-holder-name",
                             ))
                             .state_store(state_store.clone())
-                            .event_cache_store(event_cache_store.clone()),
+                            .event_cache_store(event_cache_store),
                         )
                     })
                     .build()
-                    .await;
-
-                client.event_cache().subscribe().unwrap();
-
-                client
+                    .await
             });
 
-            // Define a state store with all rooms known in it.
-            // Define the throughput.
+            // Define a state store with all rooms known in it. Define the
+            // throughput.
             group.throughput(Throughput::Elements(num_rooms));
 
             // Bench the handling of room updates.
@@ -162,9 +161,9 @@ fn handle_room_updates(c: &mut Criterion) {
 }
 
 fn find_event_relations(c: &mut Criterion) {
-    // Number of other events to saturate the DB, but that will not be affected by
-    // the benchmark. A small multiple of this number will be added.
-    // When running locally, run with more events than in Codespeed CI.
+    // Number of other events to saturate the DB, but that will not be affected
+    // by the benchmark. A small multiple of this number will be added. When
+    // running locally, run with more events than in Codespeed CI.
     #[cfg(feature = "codspeed")]
     const NUM_OTHER_EVENTS: usize = 100;
     #[cfg(not(feature = "codspeed"))]
@@ -282,8 +281,6 @@ fn find_event_relations(c: &mut Criterion) {
                     })
                     .build()
                     .await;
-
-                client.event_cache().subscribe().unwrap();
 
                 // Sync the updates before starting the benchmark.
                 let mut update_recv = client.event_cache().subscribe_to_room_generic_updates();
