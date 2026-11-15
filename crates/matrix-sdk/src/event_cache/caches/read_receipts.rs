@@ -834,7 +834,7 @@ mod tests {
     fn test_cached_receipt_requires_backfill_only_for_newer_gaps() {
         use matrix_sdk_base::event_cache::Gap;
 
-        let f = EventFactory::new().room(room_id!("!room:example.org")).sender(*ALICE);
+        let f = EventFactory::new().room(room_id!("!room:example.org")).sender(User::Alice);
         let mut linked_chunk = EventLinkedChunk::new();
         linked_chunk.push_gap(Gap { token: "older-read-history".to_owned() });
         linked_chunk.push_events(vec![

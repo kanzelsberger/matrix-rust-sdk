@@ -136,7 +136,7 @@ mod tests {
             })
             .build()
             .await;
-        let client = Client::new(sdk_client, None, None).await.unwrap();
+        let client = Client::new(sdk_client, None, None, None).await.unwrap();
         Mock::given(method("GET"))
             .and(path_regex(r"^/_matrix/client/(r0|v3)/presence/.*/status$"))
             .and(header("authorization", "Bearer 1234"))
@@ -165,7 +165,7 @@ mod tests {
             })
             .build()
             .await;
-        let client = Client::new(sdk_client, None, None).await.unwrap();
+        let client = Client::new(sdk_client, None, None, None).await.unwrap();
         Mock::given(method("PUT"))
             .and(path_regex(r"^/_matrix/client/(r0|v3)/presence/.*/status$"))
             .and(header("authorization", "Bearer 1234"))
@@ -190,7 +190,7 @@ mod tests {
             })
             .build()
             .await;
-        let client = Client::new(sdk_client, None, None).await.unwrap();
+        let client = Client::new(sdk_client, None, None, None).await.unwrap();
         Mock::given(method("GET"))
             .and(path_regex(r"^/_matrix/client/(r0|v3)/presence/.*/status$"))
             .respond_with(ResponseTemplate::new(403).set_body_json(json!({
@@ -222,7 +222,7 @@ mod tests {
                 })
                 .build()
                 .await;
-            let client = Client::new(sdk_client.clone(), None, None).await.unwrap();
+            let client = Client::new(sdk_client.clone(), None, None, None).await.unwrap();
             let (sender, mut receiver) = mpsc::unbounded_channel();
             let task = client.subscribe_to_presence_updates(Box::new(Listener(sender)));
             server.mock_sync().ok_and_run(&sdk_client, |builder| {
